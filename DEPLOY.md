@@ -65,6 +65,19 @@ pnpm worker                          # worker    — second systemd/pm2 service
 
 Example pm2: `pm2 start "pnpm start -p 3000" --name gauge-web && pm2 start "pnpm worker" --name gauge-worker && pm2 save`.
 
+## Demo server (automatic deploys)
+
+The public demo at https://gauge.gounmanual.com deploys itself on every push to `main` (`.github/workflows/deploy.yml`):
+CI (lint, typecheck, unit, integration, e2e) → build the image and push it to `ghcr.io/vishnuprabhakar42/go-unmanual-gauge-room` → SSH to the VPS and run `deploy/server-deploy.sh`.
+Pull requests only run CI.
+
+- The VPS is shared with other apps, so the stack (`deploy/docker-compose.yml`) lives in `/opt/gauge-room`, caps its memory, and joins the shared Caddy network `r2r_default`.
+- `deploy/gauge-room.caddy` is kept in `/opt/r2r/Caddyfile` between `# >>> gauge-room` / `# <<< gauge-room` markers; the deploy validates it before reloading Caddy and rolls back on failure.
+- Secrets (`POSTGRES_PASSWORD`, `AUTH_SECRET`) are generated on the server into `/opt/gauge-room/.env` on the first deploy and never leave it.
+- Demo data is seeded on every deploy; the seed skips itself once the demo company exists.
+- GitHub needs secrets `DEPLOY_SSH_KEY` (a key authorised for `root` on the VPS) and `DEPLOY_KNOWN_HOSTS` (`ssh-keyscan <host>`), and variable `DEPLOY_HOST`.
+- Remove the demo completely with `./deploy/destroy.sh` (asks you to type `DELETE`). The next push to `main` deploys a fresh copy; disable the Deploy workflow on GitHub to prevent that.
+
 ## First use
 
 - **Real company:** open `https://<your-domain>/register` to create the company and first admin, then add plants and

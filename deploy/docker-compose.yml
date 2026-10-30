@@ -1,0 +1,68 @@
+# Gauge Room demo on the shared VPS (/opt/gauge-room). Managed by .github/workflows/deploy.yml.
+# The image comes from GHCR (GAUGE_IMAGE, written to .deploy.env by server-deploy.sh); secrets live in .env.
+# The shared Caddy (/opt/r2r/Caddyfile) reaches the app as gauge-app:3000 on the r2r_default network.
+name: gauge-room
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gauge-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: Asia/Kolkata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      retries: 20
+
+  app:
+    image: ${GAUGE_IMAGE}
+    container_name: gauge-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@gauge-db:5432/${POSTGRES_DB}
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - storage:/app/storage
+    networks: [internal, edge]
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 6
+
+  worker:
+    image: ${GAUGE_IMAGE}
+    container_name: gauge-worker
+    restart: unless-stopped
+    command: ["pnpm", "worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@gauge-db:5432/${POSTGRES_DB}
+    depends_on:
+      app: { condition: service_healthy }
+    volumes:
+      - storage:/app/storage
+    networks: [internal]
+    mem_limit: 768m
+
+networks:
+  internal:
+  edge:
+    external: true
+    name: r2r_default
+
+volumes:
+  pgdata:
+  storage:
