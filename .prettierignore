@@ -1,0 +1,11 @@
+pnpm-lock.yaml
+src/generated
+.pgdata
+.next
+prisma/migrations
+.next/
+.next-e2e/
+.next-build/
+next-env.d.ts
+test-results/
+playwright-report/

@@ -1,0 +1,11 @@
+allowBuilds:
+  sharp: false
+  unrs-resolver: false
+  "@parcel/watcher": false
+  "@swc/core": false
+  "@embedded-postgres/darwin-x64": true
+  "@embedded-postgres/darwin-arm64": true
+  "@embedded-postgres/linux-x64": true
+  "@prisma/engines": true
+  prisma: true
+  esbuild: true

@@ -1,0 +1,1162 @@
+// Gauge Room — Prisma schema.
+// Conventions (see CLAUDE.md):
+//  - Every business table has organizationId and is listed in src/server/tenant/models.ts.
+//  - Use scalar foreign keys (organizationId, plantId) in writes, not nested `connect`.
+//  - No hard deletes of business records: set archivedAt.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum Role {
+  ORG_ADMIN
+  QUALITY_HEAD
+  GAUGE_INCHARGE
+  PURCHASE
+  STORES
+  OPERATOR
+  VENDOR_USER
+}
+
+enum DocType {
+  CR // calibration request
+  RFQ
+  PO
+  DC // returnable delivery challan (max 16 chars, CGST Rule 55)
+  GP // gate pass
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  ARCHIVE
+  RESTORE
+  STATUS_CHANGE
+  LOGIN
+}
+
+enum InstrumentCategory {
+  DIMENSIONAL
+  PRESSURE
+  THERMAL
+  ELECTRICAL
+  MASS
+  TORQUE
+  FORCE
+  FLOW
+  OTHER
+}
+
+enum FrequencyUnit {
+  DAYS
+  MONTHS
+}
+
+enum Criticality {
+  A
+  B
+  C
+}
+
+enum CalibrationSource {
+  EXTERNAL
+  INHOUSE
+}
+
+/// Transitions live in src/domain/instrument-status.ts. DUE_SOON/OVERDUE are computed, not statuses.
+enum InstrumentStatus {
+  IN_STORE
+  IN_USE
+  AWAITING_DISPATCH
+  AT_VENDOR
+  RECEIVED_PENDING_VERIFICATION
+  ON_HOLD_OOT
+  SCRAPPED
+  LOST
+}
+
+enum InstrumentEventType {
+  CREATED
+  STATUS_CHANGED
+  SENT
+  RECEIVED
+  CALIBRATED
+  OOT
+  MOVED
+  EDITED
+}
+
+/// Transitions live in src/domain/calibration-request-status.ts
+enum CalibrationRequestStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  SOURCING
+  PO_RAISED
+  CLOSED
+  CANCELLED
+}
+
+enum AccreditationType {
+  NABL
+  OEM
+  OTHER
+}
+
+enum VendorLinkStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum RateContractStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+}
+
+enum Sourcing {
+  CONTRACT
+  RFQ
+}
+
+enum RfqStatus {
+  OPEN
+  CLOSED
+  AWARDED
+  CANCELLED
+}
+
+enum QuoteStatus {
+  SUBMITTED
+  TECH_APPROVED
+  TECH_REJECTED
+  AWARDED
+  LOST
+}
+
+enum PoSource {
+  RATE_CONTRACT
+  RFQ
+}
+
+enum PoStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SENT
+  ACKNOWLEDGED
+  CLOSED
+  CANCELLED
+}
+
+enum ChallanStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_RETURNED
+  RETURNED
+  CANCELLED
+}
+
+enum TransportMode {
+  BY_HAND
+  COURIER
+  VEHICLE
+  VENDOR_PICKUP
+}
+
+/// Transitions live in src/domain/calibration-job-status.ts
+enum CalibrationJobStatus {
+  PLANNED
+  PO_RAISED
+  DISPATCHED
+  AT_LAB
+  RETURNED
+  CERT_UPLOADED
+  VERIFIED_PASS
+  VERIFIED_FAIL
+  CLOSED
+  CANCELLED
+}
+
+/// Lab-side progress reported via the vendor portal (or by the internal team on the lab's behalf)
+enum LabProgress {
+  RECEIVED_AT_LAB
+  IN_PROGRESS
+  DISPATCHED_BACK
+}
+
+enum CalibrationResult {
+  PASS
+  FAIL
+  LIMITED
+  NOT_CALIBRATED
+}
+
+enum OotStatus {
+  OPEN
+  ASSESSING
+  DISPOSITIONED
+  CLOSED
+}
+
+enum OotDisposition {
+  ADJUSTED
+  REPAIRED
+  DOWNGRADED
+  SCRAPPED
+  USE_AS_IS
+}
+
+/// Why an OOT case was opened
+enum OotTrigger {
+  /// As-left readings out of tolerance: instrument held
+  AS_LEFT_FAIL
+  /// Instrument passed after adjustment but was out of tolerance as found: impact assessment only
+  AS_FOUND_FAIL
+}
+
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
+}
+
+// ─────────────────────── Tenancy & organisation ───────────────────────
+
+model Organization {
+  id         String    @id @default(cuid())
+  name       String
+  gstin      String?
+  pan        String?
+  address    String?
+  logoFileId String?
+  /// Org-level settings; shape validated by src/domain/settings.ts
+  settings   Json      @default("{}")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  archivedAt DateTime?
+
+  plants              Plant[]
+  departments         Department[]
+  locations           Location[]
+  memberships         Membership[]
+  numberSeries        NumberSeries[]
+  notifications       Notification[]
+  instrumentTypes     InstrumentType[]
+  instruments         Instrument[]
+  savedViews          SavedView[]
+  attachments         Attachment[]
+  calibrationRequests CalibrationRequest[]
+  vendorLinks         VendorLink[]
+  rateContracts       RateContract[]
+  rfqs                Rfq[]
+  purchaseOrders      PurchaseOrder[]
+  challans            DeliveryChallan[]
+  calibrationJobs     CalibrationJob[]
+  auditPacks          AuditPack[]
+}
+
+model Plant {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  /// Short code used in document numbers (e.g. PLT1). Max 6 chars, A-Z0-9.
+  code           String
+  address        String?
+  gstin          String?
+  /// 2-digit GST state code, e.g. "27" for Maharashtra
+  stateCode      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  archivedAt     DateTime?
+
+  organization        Organization         @relation(fields: [organizationId], references: [id])
+  departments         Department[]
+  locations           Location[]
+  memberships         Membership[]
+  numberSeries        NumberSeries[]
+  instruments         Instrument[]
+  calibrationRequests CalibrationRequest[]
+  rateContracts       RateContract[]
+  purchaseOrders      PurchaseOrder[]
+  deliveryChallans    DeliveryChallan[]
+  auditPacks          AuditPack[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+}
+
+model Department {
+  id             String    @id @default(cuid())
+  organizationId String
+  plantId        String
+  name           String
+  parentId       String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  archivedAt     DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  plant        Plant        @relation(fields: [plantId], references: [id])
+  parent       Department?  @relation("DepartmentTree", fields: [parentId], references: [id])
+  children     Department[] @relation("DepartmentTree")
+  instruments  Instrument[]
+
+  @@unique([plantId, name])
+  @@index([organizationId, plantId])
+}
+
+model Location {
+  id             String    @id @default(cuid())
+  organizationId String
+  plantId        String
+  name           String
+  parentId       String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  archivedAt     DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  plant        Plant        @relation(fields: [plantId], references: [id])
+  parent       Location?    @relation("LocationTree", fields: [parentId], references: [id])
+  children     Location[]   @relation("LocationTree")
+  instruments  Instrument[]
+
+  @@unique([plantId, parentId, name])
+  @@index([organizationId, plantId])
+}
+
+// ─────────────────────────── Users & auth ───────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  phone         String?
+  /// bcrypt hash; null for magic-link-only users
+  passwordHash  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  archivedAt    DateTime?
+
+  accounts    Account[]
+  sessions    Session[]
+  memberships Membership[]
+  vendorUsers VendorUser[]
+}
+
+/// A user's role in an organization, optionally limited to one plant (plantId null = all plants).
+/// A user belongs to exactly one organization (enforced in src/server/memberships.ts).
+model Membership {
+  id             String    @id @default(cuid())
+  userId         String
+  organizationId String
+  plantId        String?
+  role           Role
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  archivedAt     DateTime?
+
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  plant        Plant?       @relation(fields: [plantId], references: [id])
+
+  @@index([organizationId])
+  @@index([userId])
+}
+
+// Auth.js adapter tables
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+// ─────────────────────────── Platform ───────────────────────────
+
+/// Append-only. UPDATE/DELETE are blocked by a database trigger (see migration).
+model AuditLog {
+  id             String      @id @default(cuid())
+  organizationId String?
+  actorId        String?
+  entity         String
+  entityId       String
+  action         AuditAction
+  before         Json?
+  after          Json?
+  ip             String?
+  at             DateTime    @default(now())
+
+  @@index([organizationId, at])
+  @@index([organizationId, entity, entityId])
+}
+
+/// Document number series per plant and financial year (Apr–Mar).
+model NumberSeries {
+  id             String   @id @default(cuid())
+  organizationId String
+  plantId        String
+  docType        DocType
+  /// Financial year label, e.g. "26-27"
+  fy             String
+  prefix         String
+  /// Tokens: {PREFIX} {PLANT} {FY} {FYC} {SEQ}; see src/domain/numbering.ts
+  template       String
+  padding        Int      @default(4)
+  next           Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  plant        Plant        @relation(fields: [plantId], references: [id])
+
+  @@unique([organizationId, plantId, docType, fy])
+}
+
+model Notification {
+  id             String              @id @default(cuid())
+  organizationId String
+  userId         String?
+  channel        NotificationChannel
+  template       String
+  recipient      String
+  payload        Json
+  status         NotificationStatus  @default(QUEUED)
+  error          String?
+  sentAt         DateTime?
+  createdAt      DateTime            @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
+}
+
+// ─────────────────────────── Instruments (M1) ───────────────────────────
+
+model InstrumentType {
+  id                    String             @id @default(cuid())
+  organizationId        String
+  name                  String
+  category              InstrumentCategory @default(OTHER)
+  /// Measured parameter, e.g. "Length", "Pressure"
+  parameter             String?
+  unit                  String?
+  defaultFrequencyValue Int                @default(12)
+  defaultFrequencyUnit  FrequencyUnit      @default(MONTHS)
+  /// Free text, e.g. "±0.02 mm"
+  defaultTolerance      String?
+  nablRequired          Boolean            @default(true)
+  /// HSN/SAC as configured by the org (never hard-coded)
+  hsnCode               String?
+  /// "Due soon" window for this type; falls back to org settings
+  defaultLeadTimeDays   Int?
+  /// Calibration standard / procedure (e.g. "IS 3651 (Part 1)") and the edition date; instruments inherit it
+  standardCode          String?
+  standardDate          DateTime?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  archivedAt            DateTime?
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  instruments  Instrument[]
+  rateItems    RateContractItem[]
+
+  @@unique([organizationId, name])
+}
+
+model Instrument {
+  id                 String            @id @default(cuid())
+  organizationId     String
+  plantId            String
+  /// Unique per organization
+  code               String
+  typeId             String
+  description        String?
+  make               String?
+  model              String?
+  serialNo           String?
+  rangeMin           Decimal?          @db.Decimal(18, 6)
+  rangeMax           Decimal?          @db.Decimal(18, 6)
+  unit               String?
+  leastCount         Decimal?          @db.Decimal(18, 6)
+  tolerancePlus      Decimal?          @db.Decimal(18, 6)
+  toleranceMinus     Decimal?          @db.Decimal(18, 6)
+  acceptanceCriteria String?
+  departmentId       String?
+  locationId         String?
+  custodianName      String?
+  criticality        Criticality       @default(B)
+  calibrationSource  CalibrationSource @default(EXTERNAL)
+  frequencyValue     Int
+  frequencyUnit      FrequencyUnit
+  lastCalibratedAt   DateTime?
+  nextDueAt          DateTime?
+  /// Override of "plan N days before due" (else type lead time, else org default)
+  planLeadDays       Int?
+  /// nextDueAt − lead days. Maintained by a DB trigger (see migration m8_master_fields); never write it directly.
+  planningDate       DateTime?
+  /// Overrides the type's calibration standard when set
+  standardCode       String?
+  standardDate       DateTime?
+  /// Adjustable (e.g. micrometer, pressure gauge) vs non-adjustable (plug/ring gauge); null = not specified
+  adjustable         Boolean?
+  status             InstrumentStatus  @default(IN_STORE)
+  /// When status last changed (drives "at vendor" aging)
+  statusChangedAt    DateTime          @default(now())
+  nablRequired       Boolean           @default(true)
+  /// Used for challan valuation (INR)
+  purchaseValue      Decimal?          @db.Decimal(14, 2)
+  /// Opaque token encoded in the QR label: /i/{qrToken}
+  qrToken            String            @unique
+  notes              String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  archivedAt         DateTime?
+
+  organization Organization             @relation(fields: [organizationId], references: [id])
+  plant        Plant                    @relation(fields: [plantId], references: [id])
+  type         InstrumentType           @relation(fields: [typeId], references: [id])
+  department   Department?              @relation(fields: [departmentId], references: [id])
+  location     Location?                @relation(fields: [locationId], references: [id])
+  events       InstrumentEvent[]
+  requestItems CalibrationRequestItem[]
+  poItems      PurchaseOrderItem[]
+  challanItems DeliveryChallanItem[]
+  jobs         CalibrationJob[]
+  ootCases     OotCase[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, plantId, nextDueAt])
+  @@index([organizationId, status])
+  @@index([organizationId, typeId])
+  @@index([organizationId, departmentId])
+  @@index([organizationId, planningDate])
+  @@index([organizationId, serialNo])
+  @@index([organizationId, status, statusChangedAt])
+}
+
+/// Timeline entries for the instrument history card. Append-only.
+model InstrumentEvent {
+  id             String              @id @default(cuid())
+  organizationId String
+  instrumentId   String
+  type           InstrumentEventType
+  payload        Json                @default("{}")
+  at             DateTime            @default(now())
+  actorId        String?
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@index([instrumentId, at])
+  @@index([organizationId, at])
+}
+
+/// Saved filter set for a list page (personal, or shared with the org).
+model SavedView {
+  id             String    @id @default(cuid())
+  organizationId String
+  userId         String
+  /// List identifier, e.g. "instruments"
+  page           String
+  name           String
+  /// URL query string of the filters
+  query          String
+  shared         Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  archivedAt     DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, page])
+}
+
+/// Files in object storage (certificates, quotes, logos). Upload flows arrive in M5/M6.
+model Attachment {
+  id             String    @id @default(cuid())
+  organizationId String
+  entityType     String
+  entityId       String
+  fileKey        String
+  fileName       String
+  mime           String
+  size           Int
+  uploadedBy     String?
+  createdAt      DateTime  @default(now())
+  archivedAt     DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, entityType, entityId])
+}
+
+// ─────────────────────────── Calibration requests (M2) ───────────────────────────
+
+model CalibrationRequest {
+  id             String                   @id @default(cuid())
+  organizationId String
+  plantId        String
+  /// e.g. CR/PLT1/26-27/0001
+  number         String
+  requestedById  String
+  status         CalibrationRequestStatus @default(DRAFT)
+  dueWindowFrom  DateTime?
+  dueWindowTo    DateTime?
+  notes          String?
+  submittedAt    DateTime?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  organization   Organization             @relation(fields: [organizationId], references: [id])
+  plant          Plant                    @relation(fields: [plantId], references: [id])
+  items          CalibrationRequestItem[]
+  rfqs           Rfq[]
+  purchaseOrders PurchaseOrder[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, plantId, status])
+}
+
+/// Vendor / rate-contract / sourcing columns arrive in M3.
+model CalibrationRequestItem {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  requestId          String
+  instrumentId       String
+  /// Instrument's due date when it was added (snapshot for the request)
+  dueAt              DateTime?
+  /// Vendor proposed by rate-contract auto-assignment or chosen by the user (M3)
+  proposedVendorId   String?
+  rateContractItemId String?
+  sourcing           Sourcing?
+  /// Why the proposed vendor may not fit (e.g. range outside the lab's scope)
+  scopeWarning       String?
+  createdAt          DateTime  @default(now())
+  removedAt          DateTime?
+
+  request          CalibrationRequest  @relation(fields: [requestId], references: [id])
+  instrument       Instrument          @relation(fields: [instrumentId], references: [id])
+  proposedVendor   Vendor?             @relation(fields: [proposedVendorId], references: [id])
+  rateContractItem RateContractItem?   @relation(fields: [rateContractItemId], references: [id])
+  quoteItems       QuoteItem[]
+  poItems          PurchaseOrderItem[]
+
+  @@index([organizationId, instrumentId])
+  @@index([requestId])
+}
+
+// ─────────────────────────── Vendors & purchase (M3) ───────────────────────────
+
+/// A calibration lab. Shared record (a lab can serve many customer orgs); visibility is via VendorLink.
+model Vendor {
+  id                  String            @id @default(cuid())
+  /// Org that created the record (owner for edits until labs self-manage in the portal)
+  ownerOrganizationId String
+  name                String
+  gstin               String?
+  pan                 String?
+  address             String?
+  stateCode           String?
+  /// [{ name, email, phone, isPrimary }]
+  contacts            Json              @default("[]")
+  accreditationType   AccreditationType @default(NABL)
+  nablCertNo          String?
+  nablValidUntil      DateTime?
+  onsiteCapable       Boolean           @default(false)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  archivedAt          DateTime?
+
+  links          VendorLink[]
+  scopes         VendorScope[]
+  users          VendorUser[]
+  rateContracts  RateContract[]
+  requestItems   CalibrationRequestItem[]
+  rfqInvites     RfqVendor[]
+  quotes         Quote[]
+  purchaseOrders PurchaseOrder[]
+  challans       DeliveryChallan[]
+  jobs           CalibrationJob[]
+
+  @@index([gstin])
+}
+
+/// Vendor approved for use by an organization (per-org approval and evaluation).
+model VendorLink {
+  id              String           @id @default(cuid())
+  organizationId  String
+  vendorId        String
+  status          VendorLinkStatus @default(ACTIVE)
+  isApproved      Boolean          @default(false)
+  evaluationNotes String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  archivedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  vendor       Vendor       @relation(fields: [vendorId], references: [id])
+
+  @@unique([organizationId, vendorId])
+}
+
+/// Accredited scope row (parameter, range, CMC).
+model VendorScope {
+  id         String    @id @default(cuid())
+  vendorId   String
+  discipline String
+  parameter  String
+  rangeMin   Decimal?  @db.Decimal(18, 6)
+  rangeMax   Decimal?  @db.Decimal(18, 6)
+  unit       String?
+  cmc        String?
+  createdAt  DateTime  @default(now())
+  archivedAt DateTime?
+
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+
+  @@index([vendorId])
+}
+
+/// Portal login for a lab (M5).
+model VendorUser {
+  id         String    @id @default(cuid())
+  vendorId   String
+  userId     String
+  createdAt  DateTime  @default(now())
+  archivedAt DateTime?
+
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([vendorId, userId])
+}
+
+model RateContract {
+  id             String             @id @default(cuid())
+  organizationId String
+  /// null = all plants
+  plantId        String?
+  vendorId       String
+  /// Contract / agreement reference
+  number         String
+  validFrom      DateTime
+  validTo        DateTime
+  status         RateContractStatus @default(DRAFT)
+  notes          String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  archivedAt     DateTime?
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  plant        Plant?             @relation(fields: [plantId], references: [id])
+  vendor       Vendor             @relation(fields: [vendorId], references: [id])
+  items        RateContractItem[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, vendorId])
+}
+
+model RateContractItem {
+  id               String    @id @default(cuid())
+  organizationId   String
+  contractId       String
+  instrumentTypeId String
+  rate             Decimal   @db.Decimal(14, 2)
+  gstPercent       Decimal   @default(18) @db.Decimal(5, 2)
+  onsiteRate       Decimal?  @db.Decimal(14, 2)
+  tatDays          Int       @default(7)
+  createdAt        DateTime  @default(now())
+  archivedAt       DateTime?
+
+  contract       RateContract             @relation(fields: [contractId], references: [id])
+  instrumentType InstrumentType           @relation(fields: [instrumentTypeId], references: [id])
+  requestItems   CalibrationRequestItem[]
+
+  @@unique([contractId, instrumentTypeId])
+}
+
+model Rfq {
+  id             String    @id @default(cuid())
+  organizationId String
+  plantId        String
+  requestId      String
+  number         String
+  dueAt          DateTime
+  status         RfqStatus @default(OPEN)
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  request      CalibrationRequest @relation(fields: [requestId], references: [id])
+  vendors      RfqVendor[]
+  quotes       Quote[]
+
+  @@unique([organizationId, number])
+}
+
+model RfqVendor {
+  id             String    @id @default(cuid())
+  organizationId String
+  rfqId          String
+  vendorId       String
+  invitedAt      DateTime  @default(now())
+  viewedAt       DateTime?
+
+  rfq    Rfq    @relation(fields: [rfqId], references: [id])
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+
+  @@unique([rfqId, vendorId])
+}
+
+model Quote {
+  id               String      @id @default(cuid())
+  organizationId   String
+  rfqId            String
+  vendorId         String
+  status           QuoteStatus @default(SUBMITTED)
+  validUntil       DateTime?
+  remarks          String?
+  /// Internal user who keyed the quote (vendor portal in M5)
+  enteredById      String?
+  techReviewedById String?
+  techReviewedAt   DateTime?
+  techRemarks      String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  rfq    Rfq         @relation(fields: [rfqId], references: [id])
+  vendor Vendor      @relation(fields: [vendorId], references: [id])
+  items  QuoteItem[]
+
+  @@unique([rfqId, vendorId])
+}
+
+model QuoteItem {
+  id               String   @id @default(cuid())
+  organizationId   String
+  quoteId          String
+  requestItemId    String
+  rate             Decimal  @db.Decimal(14, 2)
+  gstPercent       Decimal  @default(18) @db.Decimal(5, 2)
+  tatDays          Int
+  nablInScope      Boolean  @default(true)
+  technicalRemarks String?
+  awarded          Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  quote       Quote                  @relation(fields: [quoteId], references: [id])
+  requestItem CalibrationRequestItem @relation(fields: [requestItemId], references: [id])
+
+  @@unique([quoteId, requestItemId])
+}
+
+model PurchaseOrder {
+  id             String    @id @default(cuid())
+  organizationId String
+  plantId        String
+  vendorId       String
+  requestId      String?
+  rfqId          String?
+  number         String
+  source         PoSource
+  status         PoStatus  @default(DRAFT)
+  subtotal       Decimal   @default(0) @db.Decimal(14, 2)
+  gstAmount      Decimal   @default(0) @db.Decimal(14, 2)
+  total          Decimal   @default(0) @db.Decimal(14, 2)
+  /// Intra-state (CGST+SGST) vs inter-state (IGST), fixed at creation
+  interState     Boolean   @default(false)
+  pdfFileId      String?
+  approvedById   String?
+  approvedAt     DateTime?
+  sentAt         DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization        @relation(fields: [organizationId], references: [id])
+  plant        Plant               @relation(fields: [plantId], references: [id])
+  vendor       Vendor              @relation(fields: [vendorId], references: [id])
+  request      CalibrationRequest? @relation(fields: [requestId], references: [id])
+  items        PurchaseOrderItem[]
+  challans     DeliveryChallan[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, plantId, status])
+}
+
+model PurchaseOrderItem {
+  id             String   @id @default(cuid())
+  organizationId String
+  poId           String
+  instrumentId   String
+  requestItemId  String?
+  description    String
+  sacCode        String?
+  rate           Decimal  @db.Decimal(14, 2)
+  gstPercent     Decimal  @db.Decimal(5, 2)
+  tatDays        Int
+  onsite         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  po           PurchaseOrder           @relation(fields: [poId], references: [id])
+  instrument   Instrument              @relation(fields: [instrumentId], references: [id])
+  requestItem  CalibrationRequestItem? @relation(fields: [requestItemId], references: [id])
+  job          CalibrationJob?
+  challanItems DeliveryChallanItem[]
+
+  @@index([organizationId, instrumentId])
+}
+
+// ─────────────────────────── Dispatch & return (M4) ───────────────────────────
+
+/// Returnable delivery challan (CGST Rule 55): goods sent for calibration, not a supply.
+model DeliveryChallan {
+  id               String         @id @default(cuid())
+  organizationId   String
+  plantId          String
+  vendorId         String
+  poId             String
+  /// Assigned when issued (≤ 16 chars, DC series per plant + FY); null while DRAFT
+  number           String?
+  date             DateTime?
+  reason           String         @default("Sent for calibration — returnable, not a supply")
+  consignorGstin   String?
+  consigneeGstin   String?
+  /// State code of the place of supply (the lab's state)
+  placeOfSupply    String?
+  transportMode    TransportMode?
+  vehicleNo        String?
+  courierName      String?
+  awbNo            String?
+  ewayBillNo       String?
+  expectedReturnAt DateTime?
+  status           ChallanStatus  @default(DRAFT)
+  gatePassNo       String?
+  dispatchedAt     DateTime?
+  dispatchedById   String?
+  pdfFileId        String?
+  notes            String?
+  createdById      String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id])
+  plant        Plant                 @relation(fields: [plantId], references: [id])
+  vendor       Vendor                @relation(fields: [vendorId], references: [id])
+  po           PurchaseOrder         @relation(fields: [poId], references: [id])
+  items        DeliveryChallanItem[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, plantId, status])
+  @@index([organizationId, expectedReturnAt])
+}
+
+model DeliveryChallanItem {
+  id             String    @id @default(cuid())
+  organizationId String
+  challanId      String
+  instrumentId   String
+  poItemId       String?
+  hsnCode        String?
+  description    String
+  qty            Int       @default(1)
+  /// Taxable value for the challan (INR) — instrument value, not the calibration charge
+  value          Decimal   @db.Decimal(14, 2)
+  returnedAt     DateTime?
+  receivedById   String?
+  receiptRemarks String?
+  createdAt      DateTime  @default(now())
+
+  challan    DeliveryChallan    @relation(fields: [challanId], references: [id])
+  instrument Instrument         @relation(fields: [instrumentId], references: [id])
+  poItem     PurchaseOrderItem? @relation(fields: [poItemId], references: [id])
+  job        CalibrationJob?
+
+  @@index([organizationId, instrumentId])
+  @@index([challanId])
+}
+
+/// One calibration of one instrument (external via PO/challan, or in-house).
+model CalibrationJob {
+  id                    String               @id @default(cuid())
+  organizationId        String
+  plantId               String
+  instrumentId          String
+  /// null = in-house
+  vendorId              String?
+  poItemId              String?              @unique
+  challanItemId         String?              @unique
+  status                CalibrationJobStatus @default(PLANNED)
+  sentAt                DateTime?
+  atLabAt               DateTime?
+  receivedAt            DateTime?
+  calibratedAt          DateTime?
+  certificateNo         String?
+  ulrNo                 String?
+  nablMarkPresent       Boolean?
+  labAccreditationNo    String?
+  result                CalibrationResult?
+  nextDueAt             DateTime?
+  certificateFileId     String?
+  verifiedById          String?
+  verifiedAt            DateTime?
+  verificationChecklist Json?
+  aiExtraction          Json?
+  aiConfidence          Float?
+  /// Calibration standard in force when the result was verified (snapshot for history)
+  standardCode          String?
+  standardDate          DateTime?
+  certRejectedAt        DateTime?
+  certRejectionReason   String?
+  labProgress           LabProgress?
+  labUpdatedAt          DateTime?
+  returnCourier         String?
+  returnAwb             String?
+  returnNote            String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  organization Organization         @relation(fields: [organizationId], references: [id])
+  instrument   Instrument           @relation(fields: [instrumentId], references: [id])
+  vendor       Vendor?              @relation(fields: [vendorId], references: [id])
+  poItem       PurchaseOrderItem?   @relation(fields: [poItemId], references: [id])
+  challanItem  DeliveryChallanItem? @relation(fields: [challanItemId], references: [id])
+  readings     CalibrationReading[]
+  ootCases     OotCase[]
+
+  @@index([organizationId, plantId, status])
+  @@index([organizationId, instrumentId])
+}
+
+// ─────────────────────────── Verification & OOT (M6) ───────────────────────────
+
+/// One calibration point from the certificate. error/pass are computed by src/domain/readings.ts.
+model CalibrationReading {
+  id               String   @id @default(cuid())
+  organizationId   String
+  jobId            String
+  position         Int
+  pointLabel       String
+  nominal          Decimal  @db.Decimal(18, 6)
+  asFound          Decimal? @db.Decimal(18, 6)
+  asLeft           Decimal  @db.Decimal(18, 6)
+  /// asLeft − nominal
+  error            Decimal  @db.Decimal(18, 6)
+  /// ± permissible error at this point
+  permissibleError Decimal  @db.Decimal(18, 6)
+  uncertainty      Decimal? @db.Decimal(18, 6)
+  pass             Boolean
+  asFoundPass      Boolean?
+  createdAt        DateTime @default(now())
+
+  job CalibrationJob @relation(fields: [jobId], references: [id])
+
+  @@index([jobId])
+}
+
+model OotCase {
+  id                    String          @id @default(cuid())
+  organizationId        String
+  plantId               String
+  jobId                 String
+  instrumentId          String
+  status                OotStatus       @default(OPEN)
+  trigger               OotTrigger      @default(AS_LEFT_FAIL)
+  lastGoodCalibrationAt DateTime?
+  impactNotes           String?
+  affectedProducts      String?
+  disposition           OotDisposition?
+  dispositionNotes      String?
+  decidedById           String?
+  decidedAt             DateTime?
+  capaRef               String?
+  closedAt              DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  job        CalibrationJob @relation(fields: [jobId], references: [id])
+  instrument Instrument     @relation(fields: [instrumentId], references: [id])
+
+  @@index([organizationId, plantId, status])
+}
+
+enum AuditPackStatus {
+  QUEUED
+  RUNNING
+  READY
+  FAILED
+}
+
+/// IATF 16949 / ISO 9001 cl. 7.1.5 evidence bundle for a plant and period, generated by a background job.
+model AuditPack {
+  id             String          @id @default(cuid())
+  organizationId String
+  plantId        String
+  periodFrom     DateTime
+  periodTo       DateTime
+  status         AuditPackStatus @default(QUEUED)
+  requestedById  String
+  fileId         String?
+  pageCount      Int?
+  /// counts per section, certificates embedded/skipped
+  stats          Json?
+  error          String?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  plant        Plant        @relation(fields: [plantId], references: [id])
+
+  @@index([organizationId, plantId, createdAt])
+}

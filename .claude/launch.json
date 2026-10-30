@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "web", "runtimeExecutable": "pnpm", "runtimeArgs": ["dev"], "port": 3000 },
+    { "name": "db", "runtimeExecutable": "pnpm", "runtimeArgs": ["db:start"], "port": 5432 }
+  ]
+}

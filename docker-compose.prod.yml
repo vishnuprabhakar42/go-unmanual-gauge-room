@@ -1,0 +1,46 @@
+# Production stack: PostgreSQL + web app + background worker.
+# Usage:  cp .env.production.example .env.production  (fill it in)  →  docker compose -f docker-compose.prod.yml up -d --build
+# Put a reverse proxy with HTTPS (Caddy / nginx) in front of port 3000.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gauge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-gauge_room}
+      TZ: Asia/Kolkata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gauge}"]
+      interval: 5s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gauge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gauge_room}
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["127.0.0.1:3000:3000"]
+    volumes:
+      - storage:/app/storage
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["pnpm", "worker"]
+    env_file: .env.production
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gauge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gauge_room}
+    depends_on:
+      app: { condition: service_started }
+    volumes:
+      - storage:/app/storage # same files as the app (certificates, audit packs)
+
+volumes:
+  pgdata:
+  storage:
