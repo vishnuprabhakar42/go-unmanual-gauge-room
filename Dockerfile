@@ -21,10 +21,12 @@ COPY . .
 RUN pnpm prisma generate && pnpm build
 
 FROM base AS runtime
-ENV NODE_ENV=production PORT=3000
+# Run the project's binaries directly: pnpm at runtime would re-download itself for the `node` user and
+# re-verify node_modules (which `node` cannot write) on every container start.
+ENV NODE_ENV=production PORT=3000 PATH=/app/node_modules/.bin:$PATH
 COPY --from=build /app /app
 RUN mkdir -p /app/storage && chown -R node:node /app/storage
 USER node
 EXPOSE 3000
-# Web app (applies pending DB migrations first). The worker service overrides this with `pnpm worker`.
-CMD ["sh", "-c", "pnpm db:deploy && pnpm start -p ${PORT}"]
+# Web app (applies pending DB migrations first). The worker service overrides this with `tsx src/worker/index.ts`.
+CMD ["sh", "-c", "prisma migrate deploy && next start -p ${PORT}"]

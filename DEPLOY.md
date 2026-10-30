@@ -25,7 +25,7 @@ stay "Queued".
 ```bash
 unzip go-unmanual-gauge-room-*.zip -d gauge-room && cd gauge-room
 cp .env.production.example .env.production
-nano .env.production          # set POSTGRES_PASSWORD, APP_URL, AUTH_SECRET (openssl rand -base64 32), SMTP_*, EMAIL_FROM
+nano .env.production          # set POSTGRES_PASSWORD, APP_URL, AUTH_URL, AUTH_SECRET (openssl rand -base64 32), SMTP_*, EMAIL_FROM
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 docker compose -f docker-compose.prod.yml logs -f app worker   # "Ready" from app, "[worker] started" from worker
 ```
@@ -86,7 +86,7 @@ Pull requests only run CI.
   on a demo server, never on a real customer database:
 
   ```bash
-  docker compose -f docker-compose.prod.yml --env-file .env.production exec -e ALLOW_DEMO_SEED=true app pnpm db:seed
+  docker compose -f docker-compose.prod.yml --env-file .env.production exec -e ALLOW_DEMO_SEED=true app prisma db seed
   ```
 
   (Option B: `ALLOW_DEMO_SEED=true pnpm db:seed`.)
@@ -96,6 +96,7 @@ Pull requests only run CI.
 | Setting                     | Notes                                                                                                                                 |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `APP_URL`                   | Public HTTPS address; used in emails, QR labels and file links.                                                                       |
+| `AUTH_URL`                  | Same value as `APP_URL`. Without it, sign-in behind the reverse proxy redirects to `localhost:3000`.                                  |
 | `AUTH_SECRET`               | Random 32+ characters. Changing it signs everyone out.                                                                                |
 | `SMTP_*`, `EMAIL_FROM`      | Required for sign-in links, invitations and the 09:00 IST daily digest.                                                               |
 | `STORAGE_DRIVER`            | `local` keeps files in the `storage` volume (back it up). `s3` + `S3_*` for any S3-compatible bucket (AWS S3, MinIO, Cloudflare R2…). |

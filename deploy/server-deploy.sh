@@ -20,6 +20,7 @@ POSTGRES_USER=gauge
 POSTGRES_PASSWORD=$(openssl rand -hex 24)
 POSTGRES_DB=gauge_room
 APP_URL=https://gauge.gounmanual.com
+AUTH_URL=https://gauge.gounmanual.com
 AUTH_SECRET=$(openssl rand -base64 32)
 AUTH_TRUST_HOST=true
 TZ=Asia/Kolkata
@@ -49,7 +50,7 @@ compose up -d --wait --wait-timeout 300 --remove-orphans
 
 # 4. Demo data: the seed skips itself when the demo company already exists.
 echo "==> Seeding demo data (no-op if already seeded)"
-compose exec -T -e ALLOW_DEMO_SEED=true app pnpm db:seed
+compose exec -T -e ALLOW_DEMO_SEED=true app prisma db seed
 
 # 5. Shared Caddy: install/refresh our site block between the markers. Write with `cat >` so the
 #    file keeps its inode (the Caddy container bind-mounts it), validate first, roll back on failure.

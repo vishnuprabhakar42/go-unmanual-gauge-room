@@ -46,7 +46,7 @@ services:
     image: ${GAUGE_IMAGE}
     container_name: gauge-worker
     restart: unless-stopped
-    command: ["pnpm", "worker"]
+    command: ["tsx", "src/worker/index.ts"]
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@gauge-db:5432/${POSTGRES_DB}
